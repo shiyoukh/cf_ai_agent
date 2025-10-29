@@ -9,7 +9,10 @@ import {
   createUIMessageStream,
   convertToModelMessages,
   createUIMessageStreamResponse,
-  type ToolSet
+  type ToolSet,
+  // ↓ add these type imports to satisfy the createWorkersAI binding
+  type Ai,
+  type AiModels
 } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import { processToolCalls, cleanupMessages } from "./utils";
@@ -18,7 +21,8 @@ import { tools, executions } from "./tools";
 const SUPPORTS_TOOLS = false;
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
-type MinimalAiBinding = { run: (...args: unknown[]) => Promise<Response> };
+// ---- FIX: make MinimalAiBinding the proper full AI type
+type MinimalAiBinding = Ai<AiModels>;
 
 export interface AppEnv {
   AI?: unknown;
@@ -33,6 +37,7 @@ function createWorkersAIClient(env: AppEnv) {
     throw new Error(
       'Workers AI binding missing. Add `[ai]\nbinding = "AI"` to wrangler config.'
     );
+  // env is now narrowed: env.AI is Ai<AiModels>
   return createWorkersAI({ binding: env.AI });
 }
 
