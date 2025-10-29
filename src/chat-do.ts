@@ -1,9 +1,8 @@
 import { streamText } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
+import type { Ai, AiModels } from "@cloudflare/workers-types";
 
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-type MinimalAiBinding = { run: (...args: unknown[]) => Promise<Response> };
 
 type HistoryMessage = {
   role: "user" | "assistant" | "system";
@@ -12,17 +11,19 @@ type HistoryMessage = {
 };
 type Job = { id: string; runAt: number; prompt: string };
 
-type DOEnv = {
-  AI?: unknown;
-};
+type DOEnv = { AI?: unknown };
 
-function hasAi(env: DOEnv): env is { AI: MinimalAiBinding } {
+function hasAi(env: DOEnv): env is DOEnv & { AI: unknown } {
   return typeof (env as { AI?: unknown }).AI !== "undefined";
 }
 
 function createWorkersAIClient(env: DOEnv) {
   if (!hasAi(env)) throw new Error("Workers AI binding missing");
-  return createWorkersAI({ binding: env.AI });
+  // CF Workers AI binding uses a Response/Headers type that differs from lib.dom.
+  // This is safe at runtime on Workers, but TS types are incompatible.
+  // Suppress the one-off mismatch at the callsite.
+  // @ts-expect-error Cloudflare Workers AI binding Response differs from lib.dom Response; safe on Workers runtime.
+  return createWorkersAI({ binding: env.AI as unknown as Ai<AiModels> });
 }
 
 export class Chat {
@@ -48,16 +49,19 @@ export class Chat {
 
     if (url.pathname.endsWith("/history") && method === "DELETE") {
       await this.state.storage.delete("history");
-      await this.state.storage.delete("jobs"); // optional: clear scheduled jobs too
+      await this.state.storage.delete("jobs");
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "content-type": "application/json" }
       });
     }
 
     if (url.pathname.endsWith("/schedule") && method === "POST") {
-      const body = await request.json().catch(() => ({}));
-      const runAt: number = Number(body?.runAt);
-      const prompt: string = String(body?.prompt ?? "");
+      const body = (await request.json().catch(() => ({}))) as Partial<{
+        runAt: number;
+        prompt: string;
+      }>;
+      const runAt = Number(body.runAt);
+      const prompt = String(body.prompt ?? "");
 
       if (!Number.isFinite(runAt) || !prompt) {
         return new Response(
@@ -72,13 +76,13 @@ export class Chat {
       await this.state.storage.put("jobs", jobs);
       await this.state.storage.setAlarm(new Date(runAt));
 
-      // NEW: persist a visible confirmation message so polling won’t wipe it
+      // Persist a visible confirmation so polling won’t wipe it
       const history =
         (await this.state.storage.get<HistoryMessage[]>("history")) ?? [];
       history.push({
         role: "assistant",
         content:
-          "scheduled message: A summary of this chat will be sent in 1 minute :)",
+          "scheduled message: follow-up will be posted in about 1 minute.",
         ts: Date.now()
       });
       await this.state.storage.put("history", history);
@@ -89,20 +93,23 @@ export class Chat {
     }
 
     if (method === "POST") {
-      const body = await request.json().catch(() => ({}));
-      const userText: string = String(body?.text ?? "");
-      if (!userText)
+      const body = (await request.json().catch(() => ({}))) as Partial<{
+        text: string;
+      }>;
+      const userText = String(body.text ?? "");
+      if (!userText) {
         return new Response(
           JSON.stringify({ ok: false, error: "missing text" }),
           { status: 400 }
         );
+      }
 
       const history =
         (await this.state.storage.get<HistoryMessage[]>("history")) ?? [];
       history.push({ role: "user", content: userText, ts: Date.now() });
 
       const makeModel = createWorkersAIClient(this.env);
-      const model = makeModel(MODEL_ID);
+      const model = makeModel(MODEL_ID as never);
 
       const result = await streamText({
         system: "You are a concise, helpful assistant.",
@@ -149,15 +156,14 @@ export class Chat {
       (await this.state.storage.get<HistoryMessage[]>("history")) ?? [];
 
     const makeModel = createWorkersAIClient(this.env);
-    const model = makeModel(MODEL_ID);
+    const model = makeModel(MODEL_ID as never);
 
     for (const job of due) {
-      const prompt = job.prompt;
       const result = await streamText({
         system: "You are a concise, helpful assistant.",
         messages: [
           ...history.map((h) => ({ role: h.role, content: h.content })),
-          { role: "user", content: prompt }
+          { role: "user", content: job.prompt }
         ],
         model
       });

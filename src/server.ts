@@ -1,4 +1,4 @@
-import { routeAgentRequest, type Schedule } from "agents";
+import type { Schedule } from "agents";
 import { getSchedulePrompt } from "agents/schedule";
 import { AIChatAgent } from "agents/ai-chat-agent";
 import {
@@ -12,31 +12,36 @@ import {
   type ToolSet
 } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
+import type { Ai, AiModels } from "@cloudflare/workers-types";
 import { processToolCalls, cleanupMessages } from "./utils";
 import { tools, executions } from "./tools";
 
+// re-export the Durable Object class so the runtime finds it under the name "Chat"
 export { Chat } from "./chat-do";
 
 const SUPPORTS_TOOLS = false;
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-type MinimalAiBinding = { run: (...args: unknown[]) => Promise<Response> };
 
 export interface AppEnv {
   AI?: unknown;
   Chat: DurableObjectNamespace;
 }
 
-function hasAi(env: AppEnv): env is { AI: MinimalAiBinding } {
+function hasAi(env: AppEnv): env is AppEnv & { AI: unknown } {
   return typeof (env as { AI?: unknown }).AI !== "undefined";
 }
 
 function createWorkersAIClient(env: AppEnv) {
   if (!hasAi(env))
     throw new Error("Workers AI binding missing in environment.");
-  return createWorkersAI({ binding: env.AI });
+  // CF Workers AI binding uses a Response/Headers type that differs from lib.dom.
+  // This is safe at runtime on Workers, but TS types are incompatible.
+  // Suppress the one-off mismatch at the callsite.
+  // @ts-expect-error Cloudflare Workers AI binding Response differs from lib.dom Response; safe on Workers runtime.
+  return createWorkersAI({ binding: env.AI as unknown as Ai<AiModels> });
 }
 
+// rename the agent class so it doesn't collide with the DO class "Chat"
 export class ChatAgent extends AIChatAgent<AppEnv> {
   async onChatMessage(
     onFinish: StreamTextOnFinishCallback<ToolSet>,
@@ -101,7 +106,7 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
 }
 
 export default {
-  async fetch(request: Request, env: AppEnv, _ctx: ExecutionContext) {
+  async fetch(request: Request, env: AppEnv) {
     const url = new URL(request.url);
 
     if (url.pathname === "/check-open-ai-key") {
@@ -129,7 +134,7 @@ export default {
       }
     }
 
-    // CLEAN proxy to DO — do not forward the original Request
+    // Proxy to DO — do not forward original Request object
     if (url.pathname === "/api/chat" && request.method === "POST") {
       const sessionId = url.searchParams.get("session") || "default";
       const id = env.Chat.idFromName(sessionId);
@@ -167,9 +172,6 @@ export default {
       });
     }
 
-    return (
-      (await routeAgentRequest(request, env)) ||
-      new Response("Not found", { status: 404 })
-    );
+    return new Response("Not found", { status: 404 });
   }
 } satisfies ExportedHandler<AppEnv>;
