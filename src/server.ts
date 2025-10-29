@@ -81,7 +81,9 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
       {
         id: generateId(),
         role: "user",
-        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
+        parts: [
+          { type: "text", text: `Running scheduled task: ${description}` }
+        ],
         metadata: { createdAt: new Date() }
       }
     ]);
@@ -98,7 +100,9 @@ export default {
     }
 
     if (!env.AI) {
-      console.error("Workers AI not configured: add binding 'AI' in wrangler config.");
+      console.error(
+        "Workers AI not configured: add binding 'AI' in wrangler config."
+      );
     }
 
     if (url.pathname === "/debug-model") {
