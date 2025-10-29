@@ -14,18 +14,23 @@ import {
 import { createWorkersAI } from "workers-ai-provider";
 import { processToolCalls, cleanupMessages } from "./utils";
 import { tools, executions } from "./tools";
-import type { Ai as CloudflareAI } from "@cloudflare/workers-types";
 
 const SUPPORTS_TOOLS = false;
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
+type MinimalAiBinding = { run: (...args: unknown[]) => Promise<Response> };
+
 export interface AppEnv {
-  AI?: CloudflareAI;
+  AI?: unknown;
+}
+
+function hasAi(env: AppEnv): env is { AI: MinimalAiBinding } {
+  return typeof (env as { AI?: unknown }).AI !== "undefined";
 }
 
 function createWorkersAIClient(env: AppEnv) {
-  if (!env.AI) throw new Error("Workers AI binding missing in environment.");
-  return createWorkersAI({ binding: env.AI as CloudflareAI });
+  if (!hasAi(env)) throw new Error('Workers AI binding missing. Add `[ai]\nbinding = "AI"` to wrangler config.');
+  return createWorkersAI({ binding: env.AI });
 }
 
 export class Chat extends AIChatAgent<AppEnv> {
@@ -34,18 +39,16 @@ export class Chat extends AIChatAgent<AppEnv> {
     _options?: { abortSignal?: AbortSignal }
   ) {
     const makeModel = createWorkersAIClient(this.env);
-    const model = makeModel(MODEL_ID);
+    const model = makeModel(MODEL_ID as never);
 
-    const allTools = SUPPORTS_TOOLS
-      ? { ...tools, ...this.mcp.getAITools() }
-      : ({} as ToolSet);
+    const allTools = SUPPORTS_TOOLS ? { ...tools, ...this.mcp.getAITools() } : ({} as ToolSet);
 
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
         try {
-          const cleanedMessages = cleanupMessages(this.messages);
-          const processedMessages = await processToolCalls({
-            messages: cleanedMessages,
+          const cleaned = cleanupMessages(this.messages);
+          const processed = await processToolCalls({
+            messages: cleaned,
             dataStream: writer,
             tools: allTools,
             executions
@@ -57,14 +60,13 @@ export class Chat extends AIChatAgent<AppEnv> {
 ${getSchedulePrompt({ date: new Date() })}
 
 If the user asks to schedule a task, use the schedule tool to schedule the task.`,
-            messages: convertToModelMessages(processedMessages),
+            messages: convertToModelMessages(processed),
             model,
             ...(SUPPORTS_TOOLS ? { tools: allTools } : {}),
-            onFinish: onFinish as unknown as StreamTextOnFinishCallback<
-              typeof allTools
-            >,
+            onFinish: onFinish as unknown as StreamTextOnFinishCallback<typeof allTools>,
             stopWhen: stepCountIs(10)
           });
+
           writer.merge(result.toUIMessageStream());
         } catch (err) {
           console.error("LLM call failed:", err);
@@ -81,9 +83,7 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
       {
         id: generateId(),
         role: "user",
-        parts: [
-          { type: "text", text: `Running scheduled task: ${description}` }
-        ],
+        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
         metadata: { createdAt: new Date() }
       }
     ]);
@@ -95,20 +95,17 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/check-open-ai-key") {
-      const ok = !!env.AI;
-      return Response.json({ success: ok });
+      return Response.json({ success: hasAi(env) });
     }
 
-    if (!env.AI) {
-      console.error(
-        "Workers AI not configured: add binding 'AI' in wrangler config."
-      );
+    if (!hasAi(env)) {
+      console.error('Workers AI not configured: add `[ai]\nbinding = "AI"` to wrangler configuration.');
     }
 
     if (url.pathname === "/debug-model") {
       try {
         const makeModel = createWorkersAIClient(env);
-        const model = makeModel(MODEL_ID);
+        const model = makeModel(MODEL_ID as never);
 
         const result = await streamText({
           system: "probe",
