@@ -5,7 +5,7 @@ This project runs a streaming chat agent with task scheduling and tool-integrati
 
 ---
 
-## 🚀 Features ]
+## 🚀 Features
 
 - ⚡ Powered by Llama 3.3 (70B-Instruct)
 - 💬 Real-time streaming chat responses
