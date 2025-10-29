@@ -219,8 +219,6 @@ export default function Chat() {
     const info: { ok: boolean } = await res.json();
     if (info.ok) {
       await pullHistory();
-
-
     }
   };
 
@@ -501,7 +499,5 @@ const scheduleFollowUp = async () => {
   const info: { ok: boolean } = await res.json();
   if (info.ok) {
     await pullHistory();
-
-
   }
 };
