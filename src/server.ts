@@ -15,6 +15,8 @@ import { createWorkersAI } from "workers-ai-provider";
 import { processToolCalls, cleanupMessages } from "./utils";
 import { tools, executions } from "./tools";
 
+export { Chat } from "./chat-do";
+
 const SUPPORTS_TOOLS = false;
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
@@ -22,6 +24,7 @@ type MinimalAiBinding = { run: (...args: unknown[]) => Promise<Response> };
 
 export interface AppEnv {
   AI?: unknown;
+  Chat: DurableObjectNamespace;
 }
 
 function hasAi(env: AppEnv): env is { AI: MinimalAiBinding } {
@@ -30,16 +33,11 @@ function hasAi(env: AppEnv): env is { AI: MinimalAiBinding } {
 
 function createWorkersAIClient(env: AppEnv) {
   if (!hasAi(env))
-    throw new Error(
-      'Workers AI binding missing. Add `[ai]\nbinding = "AI"` to wrangler config.'
-    );
-  // The workers-ai-provider types expect a different binding type in some versions.
-  // Cast to keep tsc happy across sdk versions — runtime is the same.
-  // @ts-ignore – binding is runtime-provided and compatible
-  return createWorkersAI({ binding: env.AI as unknown as MinimalAiBinding });
+    throw new Error("Workers AI binding missing in environment.");
+  return createWorkersAI({ binding: env.AI });
 }
 
-export class Chat extends AIChatAgent<AppEnv> {
+export class ChatAgent extends AIChatAgent<AppEnv> {
   async onChatMessage(
     onFinish: StreamTextOnFinishCallback<ToolSet>,
     _options?: { abortSignal?: AbortSignal }
@@ -107,13 +105,8 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/check-open-ai-key") {
-      return Response.json({ success: hasAi(env) });
-    }
-
-    if (!hasAi(env)) {
-      console.error(
-        'Workers AI not configured: add `[ai]\nbinding = "AI"` to wrangler configuration.'
-      );
+      const ok = hasAi(env);
+      return Response.json({ success: ok });
     }
 
     if (url.pathname === "/debug-model") {
@@ -134,6 +127,44 @@ export default {
         const msg = e instanceof Error ? e.message : String(e);
         return new Response(`Probe failed: ${msg}`, { status: 500 });
       }
+    }
+
+    // CLEAN proxy to DO — do not forward the original Request
+    if (url.pathname === "/api/chat" && request.method === "POST") {
+      const sessionId = url.searchParams.get("session") || "default";
+      const id = env.Chat.idFromName(sessionId);
+      const stub = env.Chat.get(id);
+      const body = await request.text();
+      return stub.fetch("https://do/", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body
+      });
+    }
+
+    if (url.pathname === "/api/history") {
+      const sessionId = url.searchParams.get("session") || "default";
+      const id = env.Chat.idFromName(sessionId);
+      const stub = env.Chat.get(id);
+
+      if (request.method === "GET") {
+        return stub.fetch("https://do/history", { method: "GET" });
+      }
+      if (request.method === "DELETE") {
+        return stub.fetch("https://do/history", { method: "DELETE" });
+      }
+    }
+
+    if (url.pathname === "/api/schedule" && request.method === "POST") {
+      const sessionId = url.searchParams.get("session") || "default";
+      const id = env.Chat.idFromName(sessionId);
+      const stub = env.Chat.get(id);
+      const body = await request.text();
+      return stub.fetch("https://do/schedule", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body
+      });
     }
 
     return (
