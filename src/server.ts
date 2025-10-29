@@ -27,14 +27,16 @@ export interface AppEnv {
 }
 
 // ---------- helpers ----------
-function hasAIBinding(env: AppEnv): env is Required<Pick<AppEnv, "AI">> & AppEnv {
+function hasAIBinding(
+  env: AppEnv
+): env is Required<Pick<AppEnv, "AI">> & AppEnv {
   return typeof env.AI !== "undefined";
 }
 
 function createWorkersAIClient(env: AppEnv) {
   if (!hasAIBinding(env)) {
     throw new Error(
-      "Workers AI binding not found. Add `[ai] { binding = \"AI\" }` to wrangler config."
+      'Workers AI binding not found. Add `[ai] { binding = "AI" }` to wrangler config.'
     );
   }
   return createWorkersAI({ binding: env.AI });
@@ -97,7 +99,9 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
       {
         id: generateId(),
         role: "user",
-        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
+        parts: [
+          { type: "text", text: `Running scheduled task: ${description}` }
+        ],
         metadata: { createdAt: new Date() }
       }
     ]);
