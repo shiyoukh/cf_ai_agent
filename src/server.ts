@@ -10,19 +10,16 @@ import {
   createUIMessageStream,
   convertToModelMessages,
   createUIMessageStreamResponse,
-  type ToolSet,
+  type ToolSet
 } from "ai";
 
 import { createWorkersAI } from "workers-ai-provider";
 import { processToolCalls, cleanupMessages } from "./utils";
 import { tools, executions } from "./tools";
 
-
 const SUPPORTS_TOOLS = false;
 
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-
 
 function createWorkersAIClient(env: Env) {
   if ((env as any).AI) {
@@ -31,7 +28,7 @@ function createWorkersAIClient(env: Env) {
   if (env.WORKERSAI_API_KEY && env.GATEWAY_BASE_URL) {
     return createWorkersAI({
       apiKey: env.WORKERSAI_API_KEY,
-      baseURL: env.GATEWAY_BASE_URL,
+      baseURL: env.GATEWAY_BASE_URL
     });
   }
   throw new Error(
@@ -39,9 +36,7 @@ function createWorkersAIClient(env: Env) {
   );
 }
 
-
 export class Chat extends AIChatAgent<Env> {
-
   async onChatMessage(
     onFinish: StreamTextOnFinishCallback<ToolSet>,
     _options?: { abortSignal?: AbortSignal }
@@ -62,7 +57,7 @@ export class Chat extends AIChatAgent<Env> {
             messages: cleanedMessages,
             dataStream: writer,
             tools: allTools,
-            executions,
+            executions
           });
 
           const result = streamText({
@@ -77,7 +72,7 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
             onFinish: onFinish as unknown as StreamTextOnFinishCallback<
               typeof allTools
             >,
-            stopWhen: stepCountIs(10),
+            stopWhen: stepCountIs(10)
           });
 
           writer.merge(result.toUIMessageStream());
@@ -86,15 +81,14 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
           await writer.writeData({
             type: "error",
             content:
-              "The model call failed. Check your Workers AI credentials/binding and logs.",
+              "The model call failed. Check your Workers AI credentials/binding and logs."
           });
         }
-      },
+      }
     });
 
     return createUIMessageStreamResponse({ stream });
   }
-
 
   async executeTask(description: string, _task: Schedule<string>) {
     await this.saveMessages([
@@ -102,18 +96,18 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
       {
         id: generateId(),
         role: "user",
-        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
-        metadata: { createdAt: new Date() },
-      },
+        parts: [
+          { type: "text", text: `Running scheduled task: ${description}` }
+        ],
+        metadata: { createdAt: new Date() }
+      }
     ]);
   }
 }
 
-
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext) {
     const url = new URL(request.url);
-
 
     if (url.pathname === "/check-open-ai-key") {
       const ok = !!(env as any).AI || !!env.WORKERSAI_API_KEY;
@@ -133,14 +127,15 @@ export default {
         const { text } = await model.generate("Say 'ok' if you can hear me.");
         return new Response(text);
       } catch (e: any) {
-        return new Response(`Probe failed: ${e?.message || e}`, { status: 500 });
+        return new Response(`Probe failed: ${e?.message || e}`, {
+          status: 500
+        });
       }
     }
-
 
     return (
       (await routeAgentRequest(request, env)) ||
       new Response("Not found", { status: 404 })
     );
-  },
+  }
 } satisfies ExportedHandler<Env>;

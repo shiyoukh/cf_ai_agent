@@ -44,18 +44,23 @@ This project runs a streaming chat agent with task scheduling and tool-integrati
 You can connect to Workers AI using **either** the native `[ai]` binding (recommended) or via API key + gateway URL.
 
 ### Option A — Native [ai] Binding (recommended)
+
 In `wrangler.toml`:
+
 ```
 [ai]
 binding = "AI"
 ```
 
 ### Option B — Gateway / API Key (manual config)
+
 If you’re using a Cloudflare AI Gateway or external endpoint, set secrets:
+
 ```
 wrangler secret put WORKERSAI_API_KEY
 wrangler secret put GATEWAY_BASE_URL
 ```
+
 These will be available inside your worker as `env.WORKERSAI_API_KEY` and `env.GATEWAY_BASE_URL`.
 
 ---
@@ -69,7 +74,7 @@ These will be available inside your worker as `env.WORKERSAI_API_KEY` and `env.G
    You’ll see the **AI Chat Agent UI**. Try messages like:
    - `hello`
    - `what is 1+1?`
-   If configured correctly, you’ll get real Llama 3.3 responses streamed from Cloudflare Workers AI.
+     If configured correctly, you’ll get real Llama 3.3 responses streamed from Cloudflare Workers AI.
 
 ---
 
@@ -118,12 +123,12 @@ src/
 
 ## 🧑‍💻 Local Development Shortcuts
 
-| Command | Description |
-|----------|-------------|
-| `npm start` | Run worker locally |
-| `npm run deploy` | Deploy to Cloudflare |
-| `npm run build` | Build TypeScript |
-| `wrangler tail` | Stream production logs |
+| Command          | Description            |
+| ---------------- | ---------------------- |
+| `npm start`      | Run worker locally     |
+| `npm run deploy` | Deploy to Cloudflare   |
+| `npm run build`  | Build TypeScript       |
+| `wrangler tail`  | Stream production logs |
 
 ---
 
