@@ -14,6 +14,7 @@ import {
 } from "ai";
 
 import { createWorkersAI } from "workers-ai-provider";
+import type { Ai } from "@cloudflare/workers-types";
 import { processToolCalls, cleanupMessages } from "./utils";
 import { tools, executions } from "./tools";
 
@@ -22,31 +23,21 @@ const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 // ---------- Env typing ----------
 export interface AppEnv {
-  AI?: unknown;
-  WORKERSAI_API_KEY?: string;
-  GATEWAY_BASE_URL?: string;
+  AI?: Ai;
 }
 
 // ---------- helpers ----------
-function hasAIBinding(
-  env: AppEnv
-): env is Required<Pick<AppEnv, "AI">> & AppEnv {
-  return "AI" in env && typeof env.AI !== "undefined";
+function hasAIBinding(env: AppEnv): env is Required<Pick<AppEnv, "AI">> & AppEnv {
+  return typeof env.AI !== "undefined";
 }
 
 function createWorkersAIClient(env: AppEnv) {
-  if (hasAIBinding(env)) {
-    return createWorkersAI({ binding: env.AI });
+  if (!hasAIBinding(env)) {
+    throw new Error(
+      "Workers AI binding not found. Add `[ai] { binding = \"AI\" }` to wrangler config."
+    );
   }
-  if (env.WORKERSAI_API_KEY && env.GATEWAY_BASE_URL) {
-    return createWorkersAI({
-      apiKey: env.WORKERSAI_API_KEY,
-      baseUrl: env.GATEWAY_BASE_URL
-    });
-  }
-  throw new Error(
-    "Workers AI is not configured. Provide an [ai] binding OR WORKERSAI_API_KEY + GATEWAY_BASE_URL."
-  );
+  return createWorkersAI({ binding: env.AI });
 }
 
 // ---------- Chat Agent ----------
@@ -93,7 +84,6 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
           writer.merge(result.toUIMessageStream());
         } catch (err) {
           console.error("LLM call failed:", err);
-          // keep the UI stream alive without using non-existent writer.writeData
         }
       }
     });
@@ -107,9 +97,7 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
       {
         id: generateId(),
         role: "user",
-        parts: [
-          { type: "text", text: `Running scheduled task: ${description}` }
-        ],
+        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
         metadata: { createdAt: new Date() }
       }
     ]);
@@ -122,13 +110,13 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/check-open-ai-key") {
-      const ok = hasAIBinding(env) || !!env.WORKERSAI_API_KEY;
+      const ok = hasAIBinding(env);
       return Response.json({ success: ok });
     }
 
-    if (!hasAIBinding(env) && !env.WORKERSAI_API_KEY) {
+    if (!hasAIBinding(env)) {
       console.error(
-        "Workers AI not configured: add an [ai] binding in wrangler config OR set WORKERSAI_API_KEY + GATEWAY_BASE_URL."
+        'Workers AI not configured: add `[ai]\nbinding = "AI"` to wrangler configuration.'
       );
     }
 
