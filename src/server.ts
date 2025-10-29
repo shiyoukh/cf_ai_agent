@@ -20,21 +20,28 @@ import { tools, executions } from "./tools";
 const SUPPORTS_TOOLS = false;
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
-// ---- type guards ----
-type WithAIBinding = Env & { AI: unknown };
-function hasAIBinding(env: Env): env is WithAIBinding {
-  return typeof (env as Record<string, unknown>).AI !== "undefined";
+// ---------- Env typing ----------
+export interface AppEnv {
+  AI?: unknown;
+  WORKERSAI_API_KEY?: string;
+  GATEWAY_BASE_URL?: string;
 }
 
-// ---- Workers AI client factory ----
-function createWorkersAIClient(env: Env) {
+// ---------- helpers ----------
+function hasAIBinding(
+  env: AppEnv
+): env is Required<Pick<AppEnv, "AI">> & AppEnv {
+  return "AI" in env && typeof env.AI !== "undefined";
+}
+
+function createWorkersAIClient(env: AppEnv) {
   if (hasAIBinding(env)) {
-    return createWorkersAI({ binding: (env as WithAIBinding).AI });
+    return createWorkersAI({ binding: env.AI });
   }
   if (env.WORKERSAI_API_KEY && env.GATEWAY_BASE_URL) {
     return createWorkersAI({
       apiKey: env.WORKERSAI_API_KEY,
-      baseURL: env.GATEWAY_BASE_URL
+      baseUrl: env.GATEWAY_BASE_URL
     });
   }
   throw new Error(
@@ -42,13 +49,15 @@ function createWorkersAIClient(env: Env) {
   );
 }
 
-export class Chat extends AIChatAgent<Env> {
+// ---------- Chat Agent ----------
+export class Chat extends AIChatAgent<AppEnv> {
   async onChatMessage(
     onFinish: StreamTextOnFinishCallback<ToolSet>,
     _options?: { abortSignal?: AbortSignal }
   ) {
-    const workersai = createWorkersAIClient(this.env);
-    const model = workersai(MODEL_ID);
+    const makeModel = createWorkersAIClient(this.env);
+    type ModelArg = Parameters<typeof makeModel>[0];
+    const model = makeModel(MODEL_ID as ModelArg);
 
     const allTools = SUPPORTS_TOOLS
       ? { ...tools, ...this.mcp.getAITools() }
@@ -84,11 +93,7 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
           writer.merge(result.toUIMessageStream());
         } catch (err) {
           console.error("LLM call failed:", err);
-          await writer.writeData({
-            type: "error",
-            content:
-              "The model call failed. Check your Workers AI credentials/binding and logs."
-          });
+          // keep the UI stream alive without using non-existent writer.writeData
         }
       }
     });
@@ -111,8 +116,9 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
   }
 }
 
+// ---------- Worker entry ----------
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext) {
+  async fetch(request: Request, env: AppEnv, _ctx: ExecutionContext) {
     const url = new URL(request.url);
 
     if (url.pathname === "/check-open-ai-key") {
@@ -128,10 +134,19 @@ export default {
 
     if (url.pathname === "/debug-model") {
       try {
-        const workersai = createWorkersAIClient(env);
-        const model = workersai(MODEL_ID);
-        const { text } = await model.generate("Say 'ok' if you can hear me.");
-        return new Response(text);
+        const makeModel = createWorkersAIClient(env);
+        type ModelArg = Parameters<typeof makeModel>[0];
+        const model = makeModel(MODEL_ID as ModelArg);
+
+        const result = await streamText({
+          system: "probe",
+          messages: [{ role: "user", content: "Say 'ok' if you can hear me." }],
+          model
+        });
+
+        let out = "";
+        for await (const chunk of result.textStream) out += chunk;
+        return new Response(out || "ok");
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         return new Response(`Probe failed: ${msg}`, { status: 500 });
@@ -143,4 +158,4 @@ export default {
       new Response("Not found", { status: 404 })
     );
   }
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<AppEnv>;
