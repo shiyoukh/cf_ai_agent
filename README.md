@@ -114,7 +114,7 @@ src/
 ## 💡 Notes
 
 - Default model: `@cf/meta/llama-3.3-70b-instruct-fp8-fast`
-- Change model in `src/index.ts` by editing:
+- Change model in `src/server.ts` by editing:
   `const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";`
 - Tool-calling is disabled by default for stability. To enable:
   `const SUPPORTS_TOOLS = true;`
