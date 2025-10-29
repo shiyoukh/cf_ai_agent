@@ -36,7 +36,7 @@ export default function Chat() {
   const [status, setStatus] = useState<"idle" | "submitted" | "streaming">(
     "idle"
   );
-  const [session, setSession] = useState(sessionDefault);
+  const [session, _setSession] = useState(sessionDefault);
 
   // Prevent poll from clobbering optimistic messages and reordering
   const inFlightRef = useRef(false);
@@ -455,7 +455,10 @@ function HasWorkersAI() {
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  role="img"
+                  aria-label="Workers AI configuration warning"
                 >
+                  <title>Workers AI configuration warning</title>
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="8" x2="12" y2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -480,24 +483,3 @@ function HasWorkersAI() {
   }
   return null;
 }
-const scheduleFollowUp = async () => {
-  const delayMs = 60_000;
-  const runAt = Date.now() + delayMs;
-  const prompt = "Summarize our conversation so far in one paragraph.";
-
-  const res = await fetch(
-    `/api/schedule?session=${encodeURIComponent(session)}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ runAt, prompt })
-    }
-  );
-
-  if (!res.ok) return;
-
-  const info: { ok: boolean } = await res.json();
-  if (info.ok) {
-    await pullHistory();
-  }
-};
