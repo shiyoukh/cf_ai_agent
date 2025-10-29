@@ -29,7 +29,10 @@ function hasAi(env: AppEnv): env is { AI: MinimalAiBinding } {
 }
 
 function createWorkersAIClient(env: AppEnv) {
-  if (!hasAi(env)) throw new Error('Workers AI binding missing. Add `[ai]\nbinding = "AI"` to wrangler config.');
+  if (!hasAi(env))
+    throw new Error(
+      'Workers AI binding missing. Add `[ai]\nbinding = "AI"` to wrangler config.'
+    );
   return createWorkersAI({ binding: env.AI });
 }
 
@@ -41,7 +44,9 @@ export class Chat extends AIChatAgent<AppEnv> {
     const makeModel = createWorkersAIClient(this.env);
     const model = makeModel(MODEL_ID as never);
 
-    const allTools = SUPPORTS_TOOLS ? { ...tools, ...this.mcp.getAITools() } : ({} as ToolSet);
+    const allTools = SUPPORTS_TOOLS
+      ? { ...tools, ...this.mcp.getAITools() }
+      : ({} as ToolSet);
 
     const stream = createUIMessageStream({
       execute: async ({ writer }) => {
@@ -63,7 +68,9 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
             messages: convertToModelMessages(processed),
             model,
             ...(SUPPORTS_TOOLS ? { tools: allTools } : {}),
-            onFinish: onFinish as unknown as StreamTextOnFinishCallback<typeof allTools>,
+            onFinish: onFinish as unknown as StreamTextOnFinishCallback<
+              typeof allTools
+            >,
             stopWhen: stepCountIs(10)
           });
 
@@ -83,7 +90,9 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
       {
         id: generateId(),
         role: "user",
-        parts: [{ type: "text", text: `Running scheduled task: ${description}` }],
+        parts: [
+          { type: "text", text: `Running scheduled task: ${description}` }
+        ],
         metadata: { createdAt: new Date() }
       }
     ]);
@@ -99,7 +108,9 @@ export default {
     }
 
     if (!hasAi(env)) {
-      console.error('Workers AI not configured: add `[ai]\nbinding = "AI"` to wrangler configuration.');
+      console.error(
+        'Workers AI not configured: add `[ai]\nbinding = "AI"` to wrangler configuration.'
+      );
     }
 
     if (url.pathname === "/debug-model") {
