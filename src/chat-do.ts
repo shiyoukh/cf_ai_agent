@@ -82,7 +82,7 @@ export class Chat {
       history.push({
         role: "assistant",
         content:
-          "scheduled message: follow-up will be posted in about 1 minute.",
+          "scheduled message: A summary of this chat will be sent in 1 minute :)",
         ts: Date.now()
       });
       await this.state.storage.put("history", history);

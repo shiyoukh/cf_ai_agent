@@ -203,7 +203,7 @@ export default function Chat() {
   const scheduleFollowUp = async () => {
     const delayMs = 60_000;
     const runAt = Date.now() + delayMs;
-    const prompt = "Summarize our conversation so far in one paragraph.";
+    const prompt = "Summarize our conversation so far in one paragraph. Start your response by stating that you are summarizing this chat so far, upon my request.";
 
     const res = await fetch(
       `/api/schedule?session=${encodeURIComponent(session)}`,
