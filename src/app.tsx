@@ -1,5 +1,5 @@
 /** biome-ignore-all lint/correctness/useUniqueElementIds: it's alright */
-import { useEffect, useState, useRef, useCallback, use } from "react";
+import { useEffect, useState, useRef, useCallback, use, useMemo } from "react";
 import { Button } from "@/components/button/Button";
 import { Card } from "@/components/card/Card";
 import { Avatar } from "@/components/avatar/Avatar";
@@ -36,8 +36,21 @@ export default function Chat() {
   const [status, setStatus] = useState<"idle" | "submitted" | "streaming">(
     "idle"
   );
-  const [session, _setSession] = useState(sessionDefault);
+  const initialSession = useMemo(() => {
+    const s = new URLSearchParams(window.location.search).get("session");
+    return (s && s.trim()) || "default";
+  }, []);
 
+  const [session, setSession] = useState(initialSession);
+
+  // Keep the session in the URL synced
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("session") !== session) {
+      url.searchParams.set("session", session);
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, [session]);
   // Prevent poll from clobbering optimistic messages and reordering
   const inFlightRef = useRef(false);
 
@@ -178,7 +191,9 @@ export default function Chat() {
           {
             id: `assistant-${Date.now()}`,
             role: "assistant",
-            text: data.reply ?? "ok",
+            text:
+              data.reply ??
+              "Something isn't exactly right. Might wanna undo something?",
             createdAt: new Date().toISOString()
           }
         ]);
