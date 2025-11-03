@@ -3,6 +3,8 @@
 An intelligent real-time chatbot powered by **Llama 3.3 (70B Instruct)** on **Cloudflare Workers AI**.  
 This project runs a streaming chat agent with task scheduling and multi-session memory using Durable Objects, fully deployable on Cloudflare.
 
+This project is now live on chatbot.shiyoukh.com! I am currently self-hosting it.
+
 ---
 
 ## 🚀 Features
@@ -113,12 +115,7 @@ Test the built-in scheduling feature:
 
 ### ✅ 3. History Retrieval
 
-Your chat history auto-refreshes every 5 seconds.  
-To manually verify, open:
-```
-/api/history?session=default
-```
-in your browser. It should show stored messages for that session.
+You can return to any of your chat sessions and your chats will be there (Auto deletion currently set at every 14 days).
 
 ### ✅ 4. Error Handling & Debug
 
