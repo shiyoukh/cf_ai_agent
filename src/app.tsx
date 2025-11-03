@@ -6,15 +6,7 @@ import { Avatar } from "@/components/avatar/Avatar";
 import { Toggle } from "@/components/toggle/Toggle";
 import { Textarea } from "@/components/textarea/Textarea";
 import { MemoizedMarkdown } from "@/components/memoized-markdown";
-import {
-  Bug,
-  Moon,
-  Robot,
-  Sun,
-  Trash,
-  PaperPlaneTilt,
-  Stop
-} from "@phosphor-icons/react";
+import { Bug, Moon, Robot, Sun, Trash, PaperPlaneTilt, Stop } from "@phosphor-icons/react";
 
 type Msg = {
   id: string;
@@ -23,7 +15,9 @@ type Msg = {
   createdAt: string;
 };
 
-const sessionDefault = "default";
+function makeSessionId() {
+  return "s-" + Math.random().toString(36).slice(2, 8) + "-" + Date.now().toString(36).slice(-4);
+}
 
 export default function Chat() {
   const [theme, setTheme] = useState<"dark" | "light">(
@@ -33,44 +27,49 @@ export default function Chat() {
   const [textareaHeight, setTextareaHeight] = useState("auto");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [status, setStatus] = useState<"idle" | "submitted" | "streaming">(
-    "idle"
-  );
+  const [status, setStatus] = useState<"idle" | "submitted" | "streaming">("idle");
+
   const initialSession = useMemo(() => {
     const s = new URLSearchParams(window.location.search).get("session");
     return (s && s.trim()) || "default";
   }, []);
-
   const [session, setSession] = useState(initialSession);
 
-  // Keep the session in the URL synced
-  useEffect(() => {
+  const [sessions, setSessions] = useState<string[]>(() => {
+    const raw = localStorage.getItem("sessions");
+    const arr = raw ? (JSON.parse(raw) as string[]) : [];
+    const withCurrent = Array.from(new Set([initialSession, ...arr]));
+    return withCurrent.slice(0, 10);
+  });
+
+  const inFlightRef = useRef(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const syncUrl = useCallback(() => {
     const url = new URL(window.location.href);
     if (url.searchParams.get("session") !== session) {
       url.searchParams.set("session", session);
       window.history.replaceState(null, "", url.toString());
     }
   }, [session]);
-  // Prevent poll from clobbering optimistic messages and reordering
-  const inFlightRef = useRef(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    syncUrl();
+  }, [syncUrl]);
+
+  useEffect(() => {
+    localStorage.setItem("sessions", JSON.stringify(sessions.slice(0, 10)));
+  }, [sessions]);
+
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
   const pullHistory = useCallback(async () => {
-    if (inFlightRef.current) return; // pause polling while a send is in-flight
-    const res = await fetch(
-      `/api/history?session=${encodeURIComponent(session)}`
-    );
+    if (inFlightRef.current) return;
+    const res = await fetch(`/api/history?session=${encodeURIComponent(session)}`);
     if (!res.ok) return;
-
-    const hist: Array<{
-      role: "user" | "assistant" | "system";
-      content: string;
-      ts: number;
-    }> = await res.json();
+    const hist: Array<{ role: "user" | "assistant" | "system"; content: string; ts: number }> = await res.json();
     const mapped = hist
       .filter((h) => h.role === "user" || h.role === "assistant")
       .map((h, i) => ({
@@ -79,29 +78,23 @@ export default function Chat() {
         text: h.content,
         createdAt: new Date(h.ts).toISOString()
       }));
-
     setMessages(mapped);
   }, [session]);
 
-  // Single polling effect
   useEffect(() => {
     let alive = true;
-
     const tick = async () => {
       if (!alive) return;
       await pullHistory();
     };
-
-    tick(); // initial
+    tick();
     const t = setInterval(tick, 5000);
-
     return () => {
       alive = false;
       clearInterval(t);
     };
   }, [pullHistory]);
 
-  // Theme
   useEffect(() => {
     if (theme === "dark") {
       document.documentElement.classList.add("dark");
@@ -113,7 +106,6 @@ export default function Chat() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Scroll on new messages
   useEffect(() => {
     messages.length > 0 && scrollToBottom();
   }, [messages, scrollToBottom]);
@@ -130,7 +122,6 @@ export default function Chat() {
     const text = input.trim();
     if (!text) return;
 
-    // Optimistic user bubble
     const userMsg: Msg = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -143,14 +134,11 @@ export default function Chat() {
 
     inFlightRef.current = true;
     try {
-      const res = await fetch(
-        `/api/chat?session=${encodeURIComponent(session)}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text })
-        }
-      );
+      const res = await fetch(`/api/chat?session=${encodeURIComponent(session)}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text })
+      });
 
       if (!res.ok) {
         setStatus("idle");
@@ -167,7 +155,6 @@ export default function Chat() {
       }
 
       setStatus("streaming");
-      // Server returns authoritative history to avoid duplication/reordering
       const data: {
         ok: boolean;
         reply?: string;
@@ -185,15 +172,12 @@ export default function Chat() {
           }));
         setMessages(mapped);
       } else if (data.reply) {
-        // Fallback if server didn't include history
         setMessages((prev) => [
           ...prev,
           {
             id: `assistant-${Date.now()}`,
             role: "assistant",
-            text:
-              data.reply ??
-              "Something isn't exactly right. Might wanna undo something?",
+            text: data.reply ?? "ok",
             createdAt: new Date().toISOString()
           }
         ]);
@@ -216,19 +200,16 @@ export default function Chat() {
   };
 
   const scheduleFollowUp = async () => {
-    const delayMs = 60_000;
+    const delayMs = 10_000;
     const runAt = Date.now() + delayMs;
     const prompt =
       "Summarize our conversation so far in one paragraph. Start your response by stating that you are summarizing this chat so far, upon my request.";
 
-    const res = await fetch(
-      `/api/schedule?session=${encodeURIComponent(session)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runAt, prompt })
-      }
-    );
+    const res = await fetch(`/api/schedule?session=${encodeURIComponent(session)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ runAt, prompt })
+    });
 
     if (!res.ok) return;
 
@@ -245,23 +226,33 @@ export default function Chat() {
     setMessages([]);
   };
 
+  const startNewSession = () => {
+    const id = makeSessionId();
+    setSession(id);
+    setSessions((prev) => [id, ...prev.filter((s) => s !== id)].slice(0, 10));
+    setMessages([]);
+    const el = document.querySelector<HTMLTextAreaElement>("textarea");
+    el?.focus();
+  };
+
+  const switchSession = (id: string) => {
+    if (!id || id === session) return;
+    setSession(id);
+    setMessages([]);
+  };
+
   return (
     <div className="h-[100vh] w-full p-4 flex justify-center items-center bg-fixed overflow-hidden">
       <HasWorkersAI />
       <div className="h-[calc(100vh-2rem)] w-full mx-auto max-w-lg flex flex-col shadow-xl rounded-md overflow-hidden relative border border-neutral-300 dark:border-neutral-800">
         <div className="px-4 py-3 border-b border-neutral-300 dark:border-neutral-800 flex items-center gap-3 sticky top-0 z-10">
           <div className="flex items-center justify-center h-8 w-8">
-            <svg
-              width="28px"
-              height="28px"
-              className="text-[#F48120]"
-              data-icon="agents"
-            >
+            <svg width="28px" height="28px" className="text-[#F48120]" data-icon="agents" aria-hidden="true">
               <title>Cloudflare Agents</title>
               <symbol id="ai:local:agents" viewBox="0 0 80 79">
                 <path
                   fill="currentColor"
-                  d="M69.3 39.7c-3.1 0-5.8 2.1-6.7 5H48.3V34h4.6l4.5-2.5c1.1.8 2.5 1.2 3.9 1.2 3.8 0 7-3.1 7-7s-3.1-7-7-7-7 3.1-7 7c0 .9.2 1.8.5 2.6L51.9 30h-3.5V18.8h-.1c-1.3-1-2.9-1.6-4.5-1.9h-.2c-1.9-.3-3.9-.1-5.8.6-.4.1-.8.3-1.2.5h-.1c-.1.1-.2.1-.3.2-1.7 1-3 2.4-4 4 0 .1-.1.2-.1.2l-.3.6c0 .1-.1.1-.1.2v.1h-.6c-2.9 0-5.7 1.2-7.7 3.2-2.1 2-3.2 4.8-3.2 7.7 0 .7.1 1.4.2 2.1-1.3.9-2.4 2.1-3.2 3.5s-1.2 2.9-1.4 4.5c-.1 1.6.1 3.2.7 4.7s1.5 2.9 2.6 4c-.8 1.8-1.2 3.7-1.1 5.6 0 1.9.5 3.8 1.4 5.6s2.1 3.2 3.6 4.4c1.3 1 2.7 1.7 4.3 2.2v-.1q2.25.75 4.8.6h.1c0 .1.1.1.1.1.9 1.7 2.3 3 4 4 .1.1.2.1.3.2h.1c.4 0 .8-.1 1.3-.1h.1c1.6-.3 3.1-.9 4.5-1.9V62.9h3.5l3.1 1.7c-.3.8-.5 1.7-.5 2.6 0 3.8 3.1 7 7 7s7-3.1 7-7-3.1-7-7-7c-1.5 0-2.8.5-3.9 1.2l-4.6-2.5h-4.6V48.7h14.3c.9 2.9 3.5 5 6.7 5 3.8 0 7-3.1 7-7s-3.1-7-7-7m-7.9-16.9c1.6 0 3 1.3 3 3s-1.3 3-3 3-3-1.3-3-3 1.4-3 3-3m0 41.4c1.6 0 3 1.3 3 3s-1.3 3-3 3-3-1.3-3-3 1.4-3 3-3M44.3 72c-.4.2-.7.3-1.1.3-.2 0-.4.1-.5.1h-.2c-.9.1-1.7 0-2.6-.3-1-.3-1.9-.9-2.7-1.7-.7-.8-1.3-1.7-1.6-2.7l-.3-1.5v-.7q0-.75.3-1.5c.1-.2.1-.4.2-.7s.3-.6.5-.9c0-.1.1-.1.1-.2.1-.1.1-.2.2-.3s.1-.2.2-.3c0 0 0-.1.1-.1l.6-.6-2.7-3.5c-1.3 1.1-2.3 2.4-2.9 3.9-.2.4-.4.9-.5 1.3v.1c-.1.2-.1.4-.1.6-.3 1.1-.4 2.3-.3 3.4-.3 0-.7 0-1-.1-2.2-.4-4.2-1.5-5.5-3.2-1.4-1.7-2-3.9-1.8-6.1q.15-1.2.6-2.4l.3-.6c.1-.2.2-.4.3-.5 0 0 0-.1.1-.1.4-.7.9-1.3 1.5-1.9 1.6-1.5 3.8-2.3 6-2.3q1.05 0 2.1.3v-4.5c-.7-.1-1.4-.2-2.1-.2-1.8 0-3.5.4-5.2 1.1-.7.3-1.3.6-1.9 1s-1.1.8-1.7 1.3c-.3.2-.5.5-.8.8-.6-.8-1-1.6-1.3-2.6-.2-1-.2-2 0-2.9.2-1 .6-1.9 1.3-2.6.6-.8 1.4-1.4 2.3-1.8l1.8-.9-.7-1.9c-.4-1-.5-2.1-.4-3.1s.5-2.1 1.1-2.9q.9-1.35 2.4-2.1c.9-.5 2-.8 3-.7.5 0 1 .1 1.5.2 1 .2 1.8.7 2.6 1.3s1.4 1.4 1.8 2.3l4.1-1.5c-.9-2-2.3-3.7-4.2-4.9q-.6-.3-.9-.6c.4-.7 1-1.4 1.6-1.9.8-.7 1.8-1.1 2.9-1.3.9-.2 1.7-.1 2.6 0 .4.1.7.2 1.1.3V72z"
+                  d="M69.3 39.7c-3.1 0-5.8 2.1-6.7 5H48.3V34h4.6l4.5-2.5c1.1.8 2.5 1.2 3.9 1.2 3.8 0 7-3.1 7-7s-3.1-7-7-7-7 3.1-7 7c0 .9.2 1.8.5 2.6L51.9 30h-3.5V18.8h-.1c-1.3-1-2.9-1.6-4.5-1.9h-.2c-1.9-.3-3.9-.1-5.8.6-.4.1-.8.3-1.2.5h-.1c-.1.1-.2.1-.3.2-1.7 1-3 2.4-4 4 0 .1-.1.2-.1.2l-.3.6c0 .1-.1.1-.1.2v.1h-.6c-2.9 0-5.7 1.2-7.7 3.2-2.1 2-3.2 4.8-3.2 7.7 0 .7.1 1.4.2 2.1-1.3.9-2.4 2.1-3.2 3.5s-1.2 2.9-1.4 4.5c-.1 1.6.1 3.2.7 4.7s1.5 2.9 2.6 4c-.8 1.8-1.2 3.7-1.1 5.6 0 1.9.5 3.8 1.4 5.6s2.1 3.2 3.6 4.4c1.3 1 2.7 1.7 4.3 2.2v-.1q2.25.75 4.8.6h.1c0 .1.1.1.1.1.9 1.7 2.3 3 4 4 .1.1.2.1.3.2h.1c.4 0 .8-.1 1.3-.1h.1c1.6-.3 3.1-.9 4.5-1.9V62.9h3.5l3.1 1.7c-.3.8-.5 1.7-.5 2.6 0 3.8 3.1 7 7 7s7-3.1 7-7-3.1-7-7-7c-1.5 0-2.8.5-3.9 1.2l-4.6-2.5h-4.6V48.7h14.3c.9 2.9 3.5 5 6.7 5 3.8 0 7-3.1 7-7s-3.1-7-7-7"
                 />
               </symbol>
               <use href="#ai:local:agents" />
@@ -273,21 +264,34 @@ export default function Chat() {
           </div>
 
           <div className="flex items-center gap-2 mr-2">
+            <select
+              value={session}
+              onChange={(e) => switchSession(e.target.value)}
+              className="text-xs border rounded px-2 py-1 dark:bg-neutral-900 dark:border-neutral-700"
+              aria-label="Select session"
+            >
+              {sessions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              shape="square"
+              className="rounded-full h-8 px-3"
+              onClick={startNewSession}
+            >
+              New Chat
+            </Button>
+
             <Bug size={16} />
-            <Toggle
-              toggled={showDebug}
-              aria-label="Toggle debug mode"
-              onClick={() => setShowDebug((v) => !v)}
-            />
+            <Toggle toggled={showDebug} aria-label="Toggle debug mode" onClick={() => setShowDebug((v) => !v)} />
           </div>
 
-          <Button
-            variant="ghost"
-            size="md"
-            shape="square"
-            className="rounded-full h-9 w-9"
-            onClick={toggleTheme}
-          >
+          <Button variant="ghost" size="md" shape="square" className="rounded-full h-9 w-9" onClick={toggleTheme}>
             {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
           </Button>
 
@@ -303,13 +307,7 @@ export default function Chat() {
             <Trash size={20} />
           </Button>
 
-          <Button
-            variant="ghost"
-            size="md"
-            shape="square"
-            className="rounded-full h-9 w-9"
-            onClick={scheduleFollowUp}
-          >
+          <Button variant="ghost" size="md" shape="square" className="rounded-full h-9 w-9" onClick={scheduleFollowUp}>
             🕒
           </Button>
         </div>
@@ -323,9 +321,7 @@ export default function Chat() {
                     <Robot size={24} />
                   </div>
                   <h3 className="font-semibold text-lg">Welcome to AI Chat</h3>
-                  <p className="text-muted-foreground text-sm">
-                    Start a conversation with your AI assistant.
-                  </p>
+                  <p className="text-muted-foreground text-sm">Start a conversation with your AI assistant.</p>
                 </div>
               </Card>
             </div>
@@ -333,49 +329,25 @@ export default function Chat() {
 
           {messages.map((m, index) => {
             const isUser = m.role === "user";
-            const showAvatar =
-              index === 0 || messages[index - 1]?.role !== m.role;
+            const showAvatar = index === 0 || messages[index - 1]?.role !== m.role;
             const isScheduled = m.text.startsWith("scheduled message");
 
             return (
               <div key={m.id}>
-                {showDebug && (
-                  <pre className="text-xs text-muted-foreground overflow-scroll">
-                    {JSON.stringify(m, null, 2)}
-                  </pre>
-                )}
-                <div
-                  className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`flex gap-2 max-w-[85%] ${isUser ? "flex-row-reverse" : "flex-row"}`}
-                  >
-                    {showAvatar && !isUser ? (
-                      <Avatar username={"AI"} />
-                    ) : (
-                      !isUser && <div className="w-8" />
-                    )}
+                {showDebug && <pre className="text-xs text-muted-foreground overflow-scroll">{JSON.stringify(m, null, 2)}</pre>}
+                <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                  <div className={`flex gap-2 max-w-[85%] ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+                    {showAvatar && !isUser ? <Avatar username={"AI"} /> : !isUser && <div className="w-8" />}
                     <div>
                       <Card
                         className={`p-3 rounded-md bg-neutral-100 dark:bg-neutral-900 ${
-                          isUser
-                            ? "rounded-br-none"
-                            : "rounded-bl-none border-assistant-border"
+                          isUser ? "rounded-br-none" : "rounded-bl-none border-assistant-border"
                         } ${isScheduled ? "border-accent/50" : ""} relative`}
                       >
-                        {isScheduled && (
-                          <span className="absolute -top-3 -left-2 text-base">
-                            🕒
-                          </span>
-                        )}
-                        <MemoizedMarkdown
-                          id={`${m.id}-md`}
-                          content={m.text.replace(/^scheduled message: /, "")}
-                        />
+                        {isScheduled && <span className="absolute -top-3 -left-2 text-base">🕒</span>}
+                        <MemoizedMarkdown id={`${m.id}-md`} content={m.text.replace(/^scheduled message: /, "")} />
                       </Card>
-                      <p
-                        className={`text-xs text-muted-foreground mt-1 ${isUser ? "text-right" : "text-left"}`}
-                      >
+                      <p className={`text-xs text-muted-foreground mt-1 ${isUser ? "text-right" : "text-left"}`}>
                         {formatTime(m.createdAt)}
                       </p>
                     </div>
@@ -398,7 +370,7 @@ export default function Chat() {
           <div className="flex items-center gap-2">
             <div className="flex-1 relative">
               <Textarea
-                placeholder="Send a message..."
+                placeholder={`Send a message to ${session}...`}
                 className="flex w-full border border-neutral-200 dark:border-neutral-700 px-3 py-2 ring-offset-background placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 dark:focus-visible:ring-neutral-700 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm min-h-[24px] max-h-[calc(75dvh)] overflow-hidden resize-none rounded-2xl !text-base pb-10 dark:bg-neutral-900"
                 value={input}
                 onChange={(e) => {
@@ -408,11 +380,7 @@ export default function Chat() {
                   setTextareaHeight(`${e.target.scrollHeight}px`);
                 }}
                 onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
+                  if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                     e.preventDefault();
                     handleSubmit(e as unknown as React.FormEvent);
                     setTextareaHeight("auto");
@@ -450,9 +418,7 @@ export default function Chat() {
   );
 }
 
-const hasWorkersAiPromise = fetch("/check-open-ai-key").then((res) =>
-  res.json<{ success: boolean }>()
-);
+const hasWorkersAiPromise = fetch("/check-open-ai-key").then((res) => res.json<{ success: boolean }>());
 function HasWorkersAI() {
   const has = use(hasWorkersAiPromise);
   if (!has.success) {
@@ -481,9 +447,7 @@ function HasWorkersAI() {
                 </svg>
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
-                  Workers AI Not Configured
-                </h3>
+                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">Workers AI Not Configured</h3>
                 <p className="text-neutral-600 dark:text-neutral-300 mb-1">
                   Configure the Workers AI binding in Wrangler:
                   <code className="bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded text-red-600 dark:text-red-400 font-mono text-sm ml-2">
