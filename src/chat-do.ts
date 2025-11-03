@@ -1,4 +1,3 @@
-// chat-do.ts
 import { streamText } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 import type { Ai, AiModels } from "@cloudflare/workers-types";
@@ -14,6 +13,7 @@ const MAX_MESSAGES = 300;
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const MAX_HISTORY_CHARS = 120_000;
 const DAILY_MS = 24 * 60 * 60 * 1000;
+const MIN_ALARM_MS = 30_000;
 
 function hasAi(env: DOEnv): env is DOEnv & { AI: unknown } {
   return typeof (env as { AI?: unknown }).AI !== "undefined";
@@ -140,6 +140,25 @@ export class Chat {
         return new Response(JSON.stringify({ ok: false, error: "invalid runAt or prompt" }), { status: 400 });
       }
 
+      const now = Date.now();
+      const delta = runAt - now;
+
+      if (delta < MIN_ALARM_MS) {
+        const history = await loadHistory(this.state);
+        const makeModel = createWorkersAIClient(this.env);
+        const model = makeModel(MODEL_ID as never);
+        const result = await streamText({
+          system: "You are a concise, helpful assistant.",
+          messages: [...history.map(h => ({ role: h.role, content: h.content })), { role: "user", content: prompt }],
+          model
+        });
+        let assistant = "";
+        for await (const chunk of result.textStream) assistant += chunk;
+        history.push({ role: "assistant", content: assistant || "ok", ts: Date.now() });
+        await saveHistory(this.state, history, true);
+        return new Response(JSON.stringify({ ok: true, mode: "immediate" }), { headers: { "content-type": "application/json" } });
+      }
+
       const id = crypto.randomUUID();
       const jobs = (await this.state.storage.get<Job[]>("jobs")) ?? [];
       jobs.push({ id, runAt, prompt });
@@ -147,10 +166,11 @@ export class Chat {
       await this.state.storage.setAlarm(new Date(runAt));
 
       const history = await loadHistory(this.state);
-      history.push({ role: "assistant", content: "scheduled message: A summary of this chat will be sent in 10 seconds :)", ts: Date.now() });
+      const secs = Math.max(1, Math.round(delta / 1000));
+      history.push({ role: "assistant", content: `scheduled message: A summary of this chat will be sent in ${secs} seconds :)`, ts: Date.now() });
       await saveHistory(this.state, history, true);
 
-      return new Response(JSON.stringify({ ok: true, id }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true, id, mode: "scheduled" }), { headers: { "content-type": "application/json" } });
     }
 
     if (method === "POST") {
@@ -242,4 +262,3 @@ export class Chat {
     }
   }
 }
-
