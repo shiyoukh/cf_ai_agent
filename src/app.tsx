@@ -1,4 +1,3 @@
-// app.tsx
 /** biome-ignore-all lint/correctness/useUniqueElementIds: it's alright */
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/button/Button";
@@ -63,6 +62,19 @@ export default function Chat() {
 
   const inFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollWrapRef = useRef<HTMLDivElement>(null);
+  const lastSnapshotRef = useRef<string>("");
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollWrapRef.current;
+    if (!el) return true;
+    const threshold = 80;
+    return el.scrollHeight - (el.scrollTop + el.clientHeight) <= threshold;
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  }, []);
 
   const syncUrl = useCallback(() => {
     const url = new URL(window.location.href);
@@ -81,10 +93,6 @@ export default function Chat() {
     localStorage.setItem("sessions", JSON.stringify(sessions.slice(0, 10)));
   }, [sessions]);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
-
   const pullHistory = useCallback(async () => {
     if (inFlightRef.current) return;
     const res = await fetch(`/api/history?session=${encodeURIComponent(session)}`);
@@ -98,8 +106,23 @@ export default function Chat() {
         text: h.content,
         createdAt: new Date(h.ts).toISOString()
       }));
-    setMessages(mapped);
-  }, [session]);
+
+    const prevSnapshot = lastSnapshotRef.current;
+    const nextSnapshot = JSON.stringify(mapped.map((m) => [m.id, m.text]));
+    if (nextSnapshot !== prevSnapshot) {
+      const wasNearBottom = isNearBottom();
+      lastSnapshotRef.current = nextSnapshot;
+      setMessages((prev) => {
+        const prevLen = prev.length;
+        const nextLen = mapped.length;
+        const appended = nextLen > prevLen;
+        if (appended && wasNearBottom) {
+          queueMicrotask(() => scrollToBottom("auto"));
+        }
+        return mapped;
+      });
+    }
+  }, [session, isNearBottom, scrollToBottom]);
 
   useEffect(() => {
     let alive = true;
@@ -126,10 +149,6 @@ export default function Chat() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  useEffect(() => {
-    messages.length > 0 && scrollToBottom();
-  }, [messages, scrollToBottom]);
-
   const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
   const formatTime = (iso: string) =>
     new Date(iso).toLocaleTimeString([], {
@@ -151,6 +170,7 @@ export default function Chat() {
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setStatus("submitted");
+    queueMicrotask(() => scrollToBottom("smooth"));
 
     inFlightRef.current = true;
     try {
@@ -171,6 +191,7 @@ export default function Chat() {
             createdAt: new Date().toISOString()
           }
         ]);
+        queueMicrotask(() => scrollToBottom("smooth"));
         return;
       }
 
@@ -191,6 +212,7 @@ export default function Chat() {
             createdAt: new Date(h.ts).toISOString()
           }));
         setMessages(mapped);
+        queueMicrotask(() => scrollToBottom("smooth"));
       } else if (data.reply) {
         setMessages((prev) => [
           ...prev,
@@ -201,6 +223,7 @@ export default function Chat() {
             createdAt: new Date().toISOString()
           }
         ]);
+        queueMicrotask(() => scrollToBottom("smooth"));
       }
     } catch {
       setMessages((prev) => [
@@ -212,6 +235,7 @@ export default function Chat() {
           createdAt: new Date().toISOString()
         }
       ]);
+      queueMicrotask(() => scrollToBottom("smooth"));
     } finally {
       inFlightRef.current = false;
       setStatus("idle");
@@ -244,6 +268,7 @@ export default function Chat() {
       method: "DELETE"
     });
     setMessages([]);
+    lastSnapshotRef.current = "";
   };
 
   const startNewSession = () => {
@@ -251,6 +276,7 @@ export default function Chat() {
     setSession(id);
     setSessions((prev) => [id, ...prev.filter((s) => s !== id)].slice(0, 10));
     setMessages([]);
+    lastSnapshotRef.current = "";
     const el = document.querySelector<HTMLTextAreaElement>("textarea");
     el?.focus();
   };
@@ -259,6 +285,7 @@ export default function Chat() {
     if (!id || id === session) return;
     setSession(id);
     setMessages([]);
+    lastSnapshotRef.current = "";
   };
 
   return (
@@ -272,7 +299,7 @@ export default function Chat() {
               <symbol id="ai:local:agents" viewBox="0 0 80 79">
                 <path
                   fill="currentColor"
-                  d="M69.3 39.7c-3.1 0-5.8 2.1-6.7 5H48.3V34h4.6l4.5-2.5c1.1.8 2.5 1.2 3.9 1.2 3.8 0 7-3.1 7-7s-3.1-7-7-7-7 3.1-7 7c0 .9.2 1.8.5 2.6L51.9 30h-3.5V18.8h-.1c-1.3-1-2.9-1.6-4.5-1.9h-.2c-1.9-.3-3.9-.1-5.8.6-.4.1-.8.3-1.2.5h-.1c-.1.1-.2.1-.3.2-1.7 1-3 2.4-4 4 0 .1-.1.2-.1.2l-.3.6c0 .1-.1.1-.1.2v.1h-.6c-2.9 0-5.7 1.2-7.7 3.2-2.1 2-3.2 4.8-3.2 7.7 0 .7.1 1.4.2 2.1-1.3.9-2.4 2.1-3.2 3.5s-1.2 2.9-1.4 4.5c-.1 1.6.1 3.2.7 4.7s1.5 2.9 2.6 4c-.8 1.8-1.2 3.7-1.1 5.6 0 1.9.5 3.8 1.4 5.6s2.1 3.2 3.6 4.4c1.3 1 2.7 1.7 4.3 2.2v-.1q2.25.75 4.8.6h.1c0 .1.1.1.1.1.9 1.7 2.3 3 4 4 .1.1.2.1.3.2h.1c.4 0 .8-.1 1.3-.1h.1c1.6-.3 3.1-.9 4.5-1.9V62.9h3.5l3.1 1.7c-.3.8-.5 1.7-.5 2.6 0 3.8 3.1 7 7 7s7-3.1 7-7-3.1-7-7-7"
+                  d="M69.3 39.7c-3.1 0-5.8 2.1-6.7 5H48.3V34h4.6l4.5-2.5c1.1.8 2.5 1.2 3.9 1.2 3.8 0 7-3.1 7-7s-3.1-7-7-7-7 3.1-7 7c0 .9.2 1.8.5 2.6L51.9 30h-3.5V18.8h-.1c-1.3-1-2.9-1.6-4.5-1.9h-.2c-1.9-.3-3.9-.1-5.8.6-.4.1-.8.3-1.2.5h-.1c-.1.1-.2.1-.3.2-1.7 1-3 2.4-4 4 0 .1-.1.2-.1 .2l-.3 .6c0 .1-.1 .1-.1 .2v .1h-.6c-2.9 0-5.7 1.2-7.7 3.2-2.1 2-3.2 4.8-3.2 7.7 0 .7 .1 1.4 .2 2.1-1.3 .9-2.4 2.1-3.2 3.5s-1.2 2.9-1.4 4.5c-.1 1.6 .1 3.2 .7 4.7s1.5 2.9 2.6 4c-.8 1.8-1.2 3.7-1.1 5.6 0 1.9 .5 3.8 1.4 5.6s2.1 3.2 3.6 4.4c1.3 1 2.7 1.7 4.3 2.2v-.1q2.25 .75 4.8 .6h .1c0 .1 .1 .1 .1 .1 .9 1.7 2.3 3 4 4 .1 .1 .2 .1 .3 .2h .1c.4 0 .8-.1 1.3-.1h .1c1.6-.3 3.1-.9 4.5-1.9V62.9h3.5l3.1 1.7c-.3 .8-.5 1.7-.5 2.6 0 3.8 3.1 7 7 7s7-3.1 7-7-3.1-7-7-7"
                 />
               </symbol>
               <use href="#ai:local:agents" />
@@ -332,7 +359,7 @@ export default function Chat() {
           </Button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24 max-h-[calc(100vh-10rem)]">
+        <div ref={scrollWrapRef} className="flex-1 overflow-y-auto p-4 space-y-4 pb-24 max-h-[calc(100vh-10rem)]">
           {messages.length === 0 && (
             <div className="h-full flex items-center justify-center">
               <Card className="p-6 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900">
@@ -365,7 +392,7 @@ export default function Chat() {
                         } ${isScheduled ? "border-accent/50" : ""} relative`}
                       >
                         {isScheduled && <span className="absolute -top-3 -left-2 text-base">🕒</span>}
-                        <MemoizedMarkdown id={`${m.id}-md`} content={m.text.replace(/^scheduled message: /, "")} />
+                        <MemoizedMarkdown id={`${m.id}-md`} content={m.text} />
                       </Card>
                       <p className={`text-xs text-muted-foreground mt-1 ${isUser ? "text-right" : "text-left"}`}>
                         {formatTime(m.createdAt)}
@@ -499,4 +526,3 @@ function HasWorkersAI() {
   }
   return null;
 }
-
